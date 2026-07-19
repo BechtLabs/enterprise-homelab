@@ -8,7 +8,7 @@ This section documents the Proxmox infrastructure used in the Enterprise Homelab
 
 The Enterprise Homelab is built on Proxmox VE running on a Minisforum MS-01. Proxmox provides the virtualization platform for all virtual machines, Linux containers, and supporting infrastructure services.
 
-## Hardware
+## Platform
 
 | Component | Details |
 |-----------|---------|
