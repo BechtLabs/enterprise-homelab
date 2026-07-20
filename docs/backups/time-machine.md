@@ -57,4 +57,4 @@ This follows the principle of least privilege and keeps administrative credentia
 
 - Configure Snapshot Replication for additional protection.
 - Include the Time Machine share in the NAS backup strategy.
-- Periodically verify restore capability.
+- Periodically verify restore capability. #
