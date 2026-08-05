@@ -1,32 +1,74 @@
 # Docker Services
 
-This directory contains documentation for Docker services running in my Proxmox homelab.
+This directory contains documentation for the Docker services running in my Proxmox homelab.
 
 ## Current Services
 
-- Dockge
-- Gluetun
-- qBittorrent
-- Sonarr
-- Radarr
-- Prowlarr
-- SABnzbd
-- Plex
-- Jellyfin
-- Tautulli
-- Homepage
-- Home Assistant
-- Frigate
-- Navidrome
-- Beszel
-- Uptime Kuma
+| Service | Purpose | Status |
+|----------|----------|:------:|
+| Dockge | Docker Compose management | ✅ |
+| Gluetun | WireGuard VPN gateway | ✅ |
+| qBittorrent | Torrent client | ✅ |
+| Sonarr | TV automation | ✅ |
+| Radarr | Movie automation | ✅ |
+| Prowlarr | Index management | ✅ |
+| SABnzbd | Usenet downloads | ✅ |
+| Plex | Media server | ✅ |
+| Jellyfin | Alternate media server | ✅ |
+| Tautulli | Plex analytics | ✅ |
+| Homepage | Dashboard | ✅ |
+| Home Assistant | Home automation | ✅ |
 
-Each service contains:
+---
 
-- Purpose
-- Docker Compose
-- Configuration
-- Networking
-- Verification
-- Troubleshooting
-- Lessons Learned
+## Architecture
+
+```text
+Internet
+    │
+    ▼
+Cloudflare Tunnel
+    │
+    ▼
+Proxmox VE
+    │
+    ▼
+Ubuntu Docker VM
+    │
+    ├── Dockge
+    ├── Homepage
+    ├── Home Assistant
+    ├── Gluetun
+    │     └── qBittorrent
+    ├── Sonarr
+    ├── Radarr
+    ├── Prowlarr
+    ├── SABnzbd
+    ├── Plex
+    ├── Jellyfin
+    ├── Tautulli
+    └── Beszel Agent
+```
+
+---
+
+## Documentation
+
+| Service | Documentation |
+|----------|---------------|
+| Gluetun + qBittorrent | [Migration Guide](gluetun-qbittorrent.md) |
+| Dockge | *(Coming Soon)* |
+| Plex | *(Coming Soon)* |
+| Home Assistant | *(Coming Soon)* |
+| Frigate | *(Coming Soon)* |
+| Homepage | *(Coming Soon)* |
+
+---
+
+## Current Objectives
+
+- Standardize all Docker Compose projects
+- Manage services through Dockge
+- Document every service deployment
+- Maintain GitHub as infrastructure documentation
+- Improve disaster recovery with documented rebuild procedures
