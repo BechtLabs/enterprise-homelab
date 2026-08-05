@@ -4,7 +4,7 @@ This repository documents my production-style homelab, demonstrating modern infr
 
 ## Current Services
 
-| Service | Purpose | Status |
+| Service | Purpose | Deployment |
 |----------|----------|:------:|
 | Dockge | Docker Compose management | ✅ |
 | Gluetun | WireGuard VPN gateway | ✅ |
