@@ -1,6 +1,6 @@
 # Docker Services
 
-This directory contains documentation for the Docker services running in my Proxmox homelab.
+This repository documents my production-style homelab, demonstrating modern infrastructure engineering practices including Docker Compose, Proxmox VE, automation, monitoring, Zero Trust networking, and disaster recovery.
 
 ## Current Services
 
