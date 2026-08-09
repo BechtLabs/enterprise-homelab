@@ -18,12 +18,12 @@ the secondary Pi-hole.
 ## Architecture
 
 Primary Pi-hole (.4)
-        |
-        | Configuration synchronization
-        v
+        │
+        │ Configuration synchronization
+        ▼
 Nebula Sync (.200)
-        |
-        v
+        │
+        ▼
 Secondary Pi-hole (.14)
 
 DNS clients can use either .4 or .14.
