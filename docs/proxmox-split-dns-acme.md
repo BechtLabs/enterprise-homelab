@@ -1,189 +1,94 @@
-# Proxmox Local HTTPS with Pi-hole, Cloudflare, and ACME
+# Proxmox HTTPS with Let's Encrypt, Cloudflare DNS, and Pi-hole Split DNS
 
-## Goal
+## Overview
 
-Create a clean HTTPS experience for Proxmox using the same hostname both inside and outside the home network:
+This guide documents how to configure a Proxmox VE server with a trusted Let's Encrypt certificate while keeping local management traffic on the LAN.
 
-`proxmox.bechtfamily.org`
+The design uses:
 
-The objectives were:
+- Proxmox VE built-in ACME support
+- Let's Encrypt
+- Cloudflare DNS
+- Cloudflare API token authentication
+- Pi-hole local DNS
+- DNS-01 certificate validation
+- Split DNS for local access
 
-* Use Cloudflare Access and Cloudflare Tunnel for remote access
-* Keep Proxmox traffic local while at home
-* Eliminate browser certificate warnings
-* Avoid exposing Proxmox ports directly to the Internet
-* Avoid adding Nginx solely for certificate management
-* Preserve IPv6 rather than disabling it as a workaround
+The result is a Proxmox interface accessible locally using:
+
+```text
+https://proxmox.example.com:8006
+```
+
+without browser certificate warnings.
+
+> **Security Note:** All hostnames, domains, IP addresses, account names, and other environment-specific values in this document are examples. Replace them with values appropriate for your environment.
 
 ---
 
-## Final Architecture
+## Architecture
+
+### Local Access
+
+```text
+LAN Client
+    |
+    v
+Pi-hole DNS
+    |
+    | proxmox.example.com
+    | -> 192.168.10.10
+    v
+Proxmox VE
+    |
+    v
+TCP 8006 / HTTPS
+```
+
+Because Pi-hole resolves the hostname directly to the private Proxmox address, local traffic remains on the LAN.
 
 ### Remote Access
 
+If Cloudflare Access and Cloudflare Tunnel are also being used, remote access can follow a separate path:
+
 ```text
-Browser
-   |
-   v
-https://proxmox.bechtfamily.org
-   |
-   v
+Remote Client
+      |
+      v
 Cloudflare Access
-   |
-   v
+      |
+      v
 Cloudflare Tunnel
-   |
-   v
-https://192.168.9.6:8006
-   |
-   v
-Proxmox
+      |
+      v
+Proxmox VE
 ```
 
-Cloudflare Tunnel is configured with:
-
-```text
-Hostname:
-proxmox.bechtfamily.org
-
-Origin:
-https://192.168.9.6:8006
-```
-
-Because Proxmox originally used its self-signed certificate, the Cloudflare Tunnel origin configuration used:
-
-```text
-No TLS Verify = ON
-```
-
-Cloudflare still provides a valid browser-facing HTTPS certificate.
+This allows remote access without exposing Proxmox TCP port 8006 directly to the Internet.
 
 ---
 
-## Local Access Design
+# 1. Why ACME?
 
-Pi-hole provides split DNS inside the LAN.
+A default Proxmox installation uses a self-signed TLS certificate.
 
-Local DNS record:
+The encryption itself works, but browsers do not trust the certificate authority that issued it.
 
-```text
-proxmox.bechtfamily.org -> 192.168.9.6
-```
-
-This means devices on the home network connect directly to Proxmox instead of traversing Cloudflare.
+This commonly produces warnings such as:
 
 ```text
-Home Client
-   |
-   v
-Pi-hole DNS
-   |
-   v
-192.168.9.6
-   |
-   v
-Proxmox :8006
+Your connection is not private
 ```
+
+Rather than disabling certificate validation or accepting permanent browser exceptions, Proxmox can obtain a trusted certificate directly from Let's Encrypt.
+
+Proxmox includes native support for ACME.
 
 ---
 
-## Initial Problem
+# 2. Register a Proxmox ACME Account
 
-After adding the Pi-hole local DNS record, IPv4 resolution worked correctly:
-
-```powershell
-nslookup -type=A proxmox.bechtfamily.org 192.168.9.4
-```
-
-Result:
-
-```text
-Name:    proxmox.bechtfamily.org
-Address: 192.168.9.6
-```
-
-However, Microsoft Edge timed out while Firefox worked.
-
-Further investigation showed that IPv6 lookups were still being forwarded upstream.
-
-```powershell
-Resolve-DnsName proxmox.bechtfamily.org
-```
-
-Returned:
-
-```text
-AAAA 2606:4700:3031::ac43:ac5e
-AAAA 2606:4700:3033::6815:3fe5
-A    192.168.9.6
-```
-
-The IPv6 addresses belonged to Cloudflare.
-
-This created an inconsistent path:
-
-```text
-IPv4 -> 192.168.9.6 -> Local Proxmox
-IPv6 -> Cloudflare -> Wrong path for :8006
-```
-
-Some browsers preferred IPv6 and timed out.
-
----
-
-## Pi-hole DNS Issue
-
-The primary Pi-hole was:
-
-```text
-192.168.9.4
-```
-
-Initially, DNS requests to this Pi-hole timed out.
-
-Testing showed:
-
-```powershell
-nslookup google.com 192.168.9.4
-```
-
-failed, while the secondary Pi-hole worked:
-
-```text
-192.168.9.14
-```
-
-The Pi-hole interface setting was changed from:
-
-```text
-Allow only local requests
-```
-
-to:
-
-```text
-Permit all origins
-```
-
-After the change:
-
-```powershell
-nslookup google.com 192.168.9.4
-```
-
-worked normally.
-
-This Pi-hole remains protected behind the LAN firewall and is not directly exposed to the Internet.
-
----
-
-## Proxmox ACME / Let's Encrypt Certificate
-
-Rather than using Nginx as a certificate proxy, Proxmox's built-in ACME support was used.
-
-### ACME Account
-
-In Proxmox:
+Navigate to:
 
 ```text
 Datacenter
@@ -192,49 +97,61 @@ Datacenter
   -> Add
 ```
 
-Configuration:
+Example configuration:
 
 ```text
 Account Name: default
 ACME Directory: Let's Encrypt V2
 ```
 
-The account registered successfully.
+Provide a valid email address and accept the Let's Encrypt Terms of Service.
+
+Register the account.
+
+A successful registration should end with:
+
+```text
+TASK OK
+```
 
 ---
 
-## Cloudflare API Token
+# 3. Create a Cloudflare API Token
 
-A dedicated Cloudflare API token was created:
+The DNS-01 challenge requires Proxmox to temporarily create a DNS TXT record.
 
-```text
-proxmox-acme-dns01
-```
+A dedicated Cloudflare API token should be used instead of the Cloudflare Global API Key.
 
-Permissions:
+Create a token with the following permissions:
 
 ```text
 Zone -> DNS  -> Edit
 Zone -> Zone -> Read
 ```
 
-Resource restriction:
+Restrict the token to only the required DNS zone:
 
 ```text
+Zone Resources
+
 Include
 Specific zone
-bechtfamily.org
+example.com
 ```
 
-No client IP restriction was configured because the token must continue working during automatic certificate renewal.
+A descriptive token name could be:
 
-A dedicated token is preferred over the Cloudflare Global API Key.
+```text
+proxmox-acme
+```
+
+Do not place the actual token in documentation, scripts, Git repositories, screenshots, or configuration examples.
 
 ---
 
-## Proxmox Cloudflare DNS Challenge Plugin
+# 4. Configure the Cloudflare DNS Challenge Plugin
 
-In Proxmox:
+In Proxmox navigate to:
 
 ```text
 Datacenter
@@ -243,7 +160,7 @@ Datacenter
   -> Add
 ```
 
-Configuration:
+Example:
 
 ```text
 Plugin ID: cloudflare-dns
@@ -251,14 +168,18 @@ Validation Delay: 30
 DNS API: Cloudflare Managed DNS
 ```
 
-Credential method:
+Use API-token authentication rather than the legacy Global API Key.
+
+Example configuration:
 
 ```text
-CF_Account_ID=<Cloudflare Account ID>
-CF_Token=<dedicated API token>
+CF_Account_ID=<CLOUDFLARE_ACCOUNT_ID>
+CF_Token=<CLOUDFLARE_API_TOKEN>
 ```
 
-The following legacy fields were left blank:
+Leave legacy Global API Key fields empty when using token authentication.
+
+For example:
 
 ```text
 CF_Email=
@@ -267,46 +188,74 @@ CF_Key=
 
 ---
 
-## ACME Domain Configuration
+# 5. Configure the Proxmox ACME Domain
 
-On the Proxmox node:
+Select the Proxmox node and navigate to:
 
 ```text
-pve
-  -> System
+System
   -> Certificates
-  -> ACME
 ```
 
-Domain added:
+Under **ACME**, add a domain.
+
+Example:
 
 ```text
-Domain: proxmox.bechtfamily.org
+Domain: proxmox.example.com
 Type: DNS
 Plugin: cloudflare-dns
 ```
 
-Then:
+The DNS challenge is important because the Proxmox server does not need to be publicly reachable for Let's Encrypt validation.
+
+---
+
+# 6. Request the Certificate
+
+Select:
 
 ```text
 Order Certificates Now
 ```
 
-The ACME process successfully:
+Proxmox will begin the ACME process.
 
-1. Created `_acme-challenge.proxmox.bechtfamily.org`
-2. Waited for DNS propagation
-3. Validated ownership with Let's Encrypt
-4. Removed the temporary TXT record
-5. Downloaded the certificate
-6. Installed the certificate into `pveproxy`
-7. Restarted `pveproxy`
-
-Relevant successful output:
+During validation, it temporarily creates a TXT record similar to:
 
 ```text
-Status is 'valid', domain 'proxmox.bechtfamily.org' OK!
+_acme-challenge.proxmox.example.com
+```
 
+The general process is:
+
+```text
+Proxmox
+   |
+   | Cloudflare API
+   v
+Create temporary TXT record
+   |
+   v
+Let's Encrypt checks DNS
+   |
+   v
+Domain ownership validated
+   |
+   v
+Certificate issued
+   |
+   v
+TXT record removed
+   |
+   v
+Certificate installed
+```
+
+Successful output should contain messages similar to:
+
+```text
+Status is 'valid'
 All domains validated!
 
 Downloading certificate
@@ -314,67 +263,135 @@ Setting pveproxy certificate and key
 Restarting pveproxy
 ```
 
+At this point Proxmox is serving the Let's Encrypt certificate.
+
 ---
 
-## Local AAAA Leak
+# 7. Configure Pi-hole Split DNS
 
-Pi-hole contained the correct local IPv4 record:
+For local access, configure Pi-hole to resolve the Proxmox hostname directly to its private IP address.
+
+Navigate to:
 
 ```text
-proxmox.bechtfamily.org -> 192.168.9.6
+Pi-hole
+  -> Local DNS
+  -> DNS Records
 ```
 
-But AAAA requests continued upstream.
+Create:
 
-Testing:
+```text
+Domain:
+proxmox.example.com
+
+IP:
+192.168.10.10
+```
+
+The resulting local DNS behavior should be:
+
+```text
+proxmox.example.com
+        |
+        v
+192.168.10.10
+```
+
+This prevents local clients from unnecessarily leaving the LAN to reach the Proxmox server.
+
+---
+
+# 8. Verify IPv4 Resolution
+
+From a client using Pi-hole for DNS:
 
 ```powershell
-nslookup -type=AAAA proxmox.bechtfamily.org 192.168.9.4
+nslookup -type=A proxmox.example.com <PIHOLE_IP>
 ```
 
-returned Cloudflare IPv6 addresses.
-
-The same behavior was observed with:
+Expected result:
 
 ```text
-plex.bechtfamily.org
+Name:    proxmox.example.com
+Address: 192.168.10.10
 ```
+
+Another useful test is:
+
+```powershell
+Resolve-DnsName proxmox.example.com -Type A
+```
+
+The hostname should resolve to the private LAN address.
 
 ---
 
-## Pi-hole v6 Fix
+# 9. Watch for AAAA / IPv6 Leakage
 
-Pi-hole FTL version:
+An interesting issue can occur when split DNS overrides only the IPv4 `A` record.
+
+For example:
+
+```text
+A     -> 192.168.10.10
+AAAA  -> Public IPv6 address
+```
+
+Some browsers and operating systems may prefer IPv6.
+
+That can result in one browser successfully reaching Proxmox while another browser times out.
+
+Check IPv6 resolution explicitly:
+
+```powershell
+Resolve-DnsName proxmox.example.com -Type AAAA
+```
+
+or:
+
+```powershell
+nslookup -type=AAAA proxmox.example.com <PIHOLE_IP>
+```
+
+If the local service is intended to be IPv4-only, public AAAA records should not leak through the local DNS override.
+
+---
+
+# 10. Pi-hole v6 Solution
+
+The following approach applies to Pi-hole v6.
+
+Check the installed FTL version:
 
 ```bash
 pihole-FTL --version
 ```
 
-Result:
-
-```text
-v6.7
-```
-
-Current DNS configuration was reviewed using:
+Review the current DNS configuration:
 
 ```bash
 pihole-FTL --config dns
 ```
 
-The existing local host configuration included:
+Pi-hole may contain a local host record similar to:
 
 ```text
-192.168.9.6 proxmox.bechtfamily.org
+192.168.10.10 proxmox.example.com
 ```
 
-To prevent unanswered AAAA queries for the local hostname from being forwarded to Cloudflare, the following dnsmasq directive was added through Pi-hole v6:
+However, an unanswered AAAA query may still be forwarded to an upstream DNS provider.
+
+A dnsmasq local-zone directive can prevent that behavior.
+
+Example:
 
 ```bash
-sudo pihole-FTL --config misc.dnsmasq_lines '["local=/proxmox.bechtfamily.org/"]'
+sudo pihole-FTL --config misc.dnsmasq_lines \
+'["local=/proxmox.example.com/"]'
 ```
 
-Then Pi-hole FTL was restarted:
+Restart Pi-hole FTL:
 
 ```bash
 sudo systemctl restart pihole-FTL
@@ -382,142 +399,229 @@ sudo systemctl restart pihole-FTL
 
 ---
 
-## Verification
+# 11. Verify the AAAA Fix
 
-### IPv4
-
-```powershell
-nslookup -type=A proxmox.bechtfamily.org 192.168.9.4
-```
-
-Result:
-
-```text
-Name:    proxmox.bechtfamily.org
-Address: 192.168.9.6
-```
-
-### IPv6
+Test again:
 
 ```powershell
-nslookup -type=AAAA proxmox.bechtfamily.org 192.168.9.4
+nslookup -type=AAAA proxmox.example.com <PIHOLE_IP>
 ```
 
-Result:
+For an IPv4-only local service, the desired result is:
 
 ```text
-No IPv6 address (AAAA) records available for proxmox.bechtfamily.org
+No IPv6 address (AAAA) records available for proxmox.example.com
 ```
 
-This is the desired behavior.
+Then verify IPv4 still works:
+
+```powershell
+nslookup -type=A proxmox.example.com <PIHOLE_IP>
+```
+
+Expected:
+
+```text
+Name:    proxmox.example.com
+Address: 192.168.10.10
+```
+
+The important result is:
+
+```text
+A     -> Private LAN address
+AAAA  -> No public answer
+```
 
 ---
 
-## Windows DNS Cache
+# 12. Flush Client DNS Cache
 
-After the DNS fix:
+Clients may continue using cached DNS records after the server-side configuration has been corrected.
+
+On Windows:
 
 ```powershell
 ipconfig /flushdns
 ```
 
-Microsoft Edge was completely closed and reopened.
+Completely close and reopen the browser.
 
-The following URL then worked normally:
+Then connect to:
 
 ```text
-https://proxmox.bechtfamily.org:8006
+https://proxmox.example.com:8006
 ```
 
-with:
-
-* No timeout
-* No certificate warning
-* Trusted Let's Encrypt certificate
-* Local LAN routing
+The browser should now connect directly to the Proxmox server using the trusted Let's Encrypt certificate.
 
 ---
 
-## Final Result
+# Troubleshooting
 
-### At Home
+## One Browser Works but Another Times Out
 
-```text
-proxmox.bechtfamily.org
-        |
-        v
-Pi-hole
-        |
-        v
-192.168.9.6
-        |
-        v
-Proxmox :8006
-        |
-        v
-Let's Encrypt HTTPS
-```
+Do not immediately assume the browser is the problem.
 
-Traffic stays entirely on the LAN.
-
-### Away From Home
-
-```text
-proxmox.bechtfamily.org
-        |
-        v
-Cloudflare Access
-        |
-        v
-Cloudflare Tunnel
-        |
-        v
-Proxmox
-```
-
-No inbound Proxmox ports are exposed.
-
----
-
-## Lessons Learned
-
-A local Pi-hole A record alone does not necessarily prevent AAAA queries from being forwarded upstream.
-
-When using split DNS with Cloudflare-proxied hostnames, verify both record types:
+Compare IPv4 and IPv6 DNS resolution:
 
 ```powershell
-Resolve-DnsName hostname
-Resolve-DnsName hostname -Type A
-Resolve-DnsName hostname -Type AAAA
+Resolve-DnsName proxmox.example.com -Type A
+Resolve-DnsName proxmox.example.com -Type AAAA
 ```
 
-Different browsers may select different address families, which can make an IPv6 DNS leak appear to be a browser-specific problem.
-
-The clean solution was to fix DNS rather than:
-
-* Disable IPv6
-* Ignore certificate warnings
-* Add unnecessary reverse proxies
-* Expose Proxmox directly to the Internet
-* Modify browser security settings
+If IPv4 points to the LAN while IPv6 points somewhere else, the browsers may simply be choosing different network paths.
 
 ---
 
-## Next Steps
+## Test IPv4 Directly
 
-Apply the same local-DNS treatment to:
-
-```text
-plex.bechtfamily.org
-radarr.bechtfamily.org
-sonarr.bechtfamily.org
-homarr.bechtfamily.org
+```bash
+curl -4 -I https://proxmox.example.com:8006
 ```
 
-Then review old infrastructure associated with:
+A response from Proxmox confirms:
 
-```text
-192.168.9.50
+- DNS resolution works
+- TCP 8006 is reachable
+- TLS negotiation succeeds
+- The Proxmox web service is responding
+
+Note that Proxmox may return an HTTP error for a `HEAD` request while still proving that connectivity and TLS are functioning.
+
+---
+
+## Test IPv6 Directly
+
+```bash
+curl -6 -I https://proxmox.example.com:8006
 ```
 
-and determine whether the previous Nginx Proxy Manager configuration and its Cloudflare API token can be retired.
+If IPv6 is not configured for the local service, this should not resolve to an unrelated public destination.
+
+---
+
+# Security Considerations
+
+## Use Least-Privilege API Tokens
+
+The Cloudflare token only needs:
+
+```text
+Zone -> DNS  -> Edit
+Zone -> Zone -> Read
+```
+
+Restrict it to the specific DNS zone used for ACME.
+
+Avoid using the Global API Key.
+
+---
+
+## Do Not Publish Secrets
+
+Never commit:
+
+```text
+Cloudflare API tokens
+Cloudflare Global API Keys
+Account IDs unnecessarily
+Private keys
+ACME account keys
+Tunnel credentials
+Real internal hostnames/IP addresses unnecessarily
+```
+
+Use placeholders in public documentation.
+
+---
+
+## Do Not Expose Proxmox Port 8006
+
+A trusted TLS certificate does not make direct Internet exposure desirable.
+
+For remote administration, use an appropriate secure access method such as:
+
+```text
+VPN
+Zero-trust access
+Cloudflare Access/Tunnel
+Other authenticated private-access solution
+```
+
+---
+
+# Final Architecture
+
+## Inside the LAN
+
+```text
+Client
+  |
+  | DNS query
+  v
+Pi-hole
+  |
+  | proxmox.example.com
+  | -> 192.168.10.10
+  v
+Proxmox VE :8006
+  |
+  v
+Let's Encrypt TLS
+```
+
+## Outside the LAN
+
+One possible architecture:
+
+```text
+Remote Client
+      |
+      v
+Cloudflare Access
+      |
+      v
+Cloudflare Tunnel
+      |
+      v
+Proxmox VE
+```
+
+No direct inbound connection to TCP 8006 is required.
+
+---
+
+# Key Takeaways
+
+1. Proxmox can manage its own Let's Encrypt certificates using ACME.
+
+2. A reverse proxy is not required solely to obtain a trusted certificate for the Proxmox management interface.
+
+3. Cloudflare DNS-01 validation allows certificate issuance without exposing Proxmox to the Internet.
+
+4. Pi-hole split DNS keeps local management traffic on the LAN.
+
+5. Always test both `A` and `AAAA` DNS records when troubleshooting inconsistent browser behavior.
+
+6. A public AAAA response can cause IPv6-capable clients to take a completely different path than IPv4 clients.
+
+7. Fix the DNS architecture rather than disabling IPv6 as a troubleshooting shortcut.
+
+8. Dedicated, least-privilege API tokens are preferable to account-wide API keys.
+
+---
+
+## Environment Used
+
+This procedure was tested with:
+
+```text
+Proxmox VE 9.x
+Pi-hole 6.x
+Cloudflare DNS
+Let's Encrypt ACME v2
+Windows client
+```
+
+Exact versions and network addresses are intentionally omitted from this public documentation.
