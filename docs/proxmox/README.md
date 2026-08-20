@@ -21,7 +21,7 @@ The Enterprise Homelab is built on Proxmox VE running on a Minisforum MS-01. Pro
 
 | VM ID | Name | Purpose | IP Address |
 |------:|------|---------|------------|
-| 300 | Ubuntu Docker | Primary Docker host | 192.168.9.200 |
+| 200 | Ubuntu Docker | Primary Docker host | 192.168.9.200 |
 | TBD | PBS | Backup Server | 192.168.9.10 |
 | TBD | Kali Linux | Security lab | DHCP |
 
